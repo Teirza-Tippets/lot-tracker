@@ -35,6 +35,13 @@
            background: var(--accent); color: var(--accent-ink); }
   button:disabled { background: var(--line); color: var(--muted); cursor: not-allowed; }
   button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+  .op { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
+  input { font: inherit; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px;
+          background: var(--card); color: var(--ink); width: 11rem; }
+  #msg { min-height: 1.5em; margin: 0 0 16px; color: var(--muted); }
+  #msg.error { color: #b45309; font-weight: 600; }
+  .lot.hold { border-color: #b45309; border-left-width: 6px; }
+  .hold-note { color: #b45309; font-size: .9rem; }
   @media (max-width: 520px) { .lot { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -42,6 +49,11 @@
 <main>
   <h1>Lot Tracker</h1>
   <p class="sub">Track lots in and out of each process step, like a manufacturing execution system (MES).</p>
+  <div class="op">
+    <label for="op">Operator ID</label>
+    <input id="op" autocomplete="off" placeholder="e.g. TT204">
+  </div>
+  <p id="msg" role="status"></p>
   <div class="route" id="route" aria-label="Process route"></div>
   <div id="lots"></div>
 </main>
@@ -59,19 +71,65 @@
 
   const now = () => new Date().toLocaleTimeString();
 
-  // STEP 4: Track In starts work on the current step. Track Out finishes it
-  // and moves the lot to the next step (or completes it).
+  // STEP 5: rules. The system refuses actions that break the process.
+  const SPEC = { step: "Inspect", min: 95, max: 105 }; // acceptable reading range
+
+  function say(text, isError) {
+    const m = document.getElementById("msg");
+    m.textContent = text;
+    m.className = isError ? "error" : "";
+  }
+
+  // Rule 1: every action needs an operator ID.
+  function operator() {
+    const id = document.getElementById("op").value.trim().toUpperCase();
+    if (!id) say("Enter your operator ID before doing anything.", true);
+    return id;
+  }
+
   function trackIn(lot) {
-    if (lot.status !== "Queued") return;
+    const op = operator();
+    if (!op || lot.status !== "Queued") return;
     lot.status = "Running";
-    lot.lastEvent = `Tracked in at ${ROUTE[lot.step]}, ${now()}`;
+    lot.lastEvent = `${op} tracked in at ${ROUTE[lot.step]}, ${now()}`;
+    say(`${lot.id} is running at ${ROUTE[lot.step]}.`);
   }
 
   function trackOut(lot) {
-    if (lot.status !== "Running") return;
-    lot.lastEvent = `Tracked out of ${ROUTE[lot.step]}, ${now()}`;
+    const op = operator();
+    if (!op || lot.status !== "Running") return;
+    const stepName = ROUTE[lot.step];
+
+    // Rule 2: the inspection step needs a measurement, and bad readings stop the lot.
+    if (stepName === SPEC.step) {
+      const reading = parseFloat(prompt(`Inspection reading for ${lot.id} (spec ${SPEC.min} to ${SPEC.max}):`));
+      if (Number.isNaN(reading)) return say("A valid reading is required to track out of Inspect.", true);
+      if (reading < SPEC.min || reading > SPEC.max) {
+        lot.status = "On Hold";
+        lot.holdBy = op;
+        lot.holdReason = `Reading ${reading} is outside spec ${SPEC.min} to ${SPEC.max}`;
+        lot.lastEvent = `${op} placed on hold at ${stepName}, ${now()}`;
+        return say(`${lot.id} placed on hold: ${lot.holdReason}.`, true);
+      }
+    }
+
+    lot.lastEvent = `${op} tracked out of ${stepName}, ${now()}`;
     lot.step += 1;
     lot.status = lot.step >= ROUTE.length ? "Complete" : "Queued";
+    say(`${lot.id} moved on.`);
+  }
+
+  // Rule 3: releasing a hold needs a reason and a different person than the one who set it.
+  function release(lot) {
+    const op = operator();
+    if (!op || lot.status !== "On Hold") return;
+    if (op === lot.holdBy) return say("A different operator must release this hold.", true);
+    const reason = (prompt("Reason for releasing the hold:") || "").trim();
+    if (!reason) return say("A release reason is required.", true);
+    lot.status = "Queued"; // goes back to be re-inspected
+    lot.lastEvent = `${op} released hold (${reason}), ${now()}`;
+    lot.holdBy = lot.holdReason = null;
+    say(`${lot.id} released and queued for ${ROUTE[lot.step]}.`);
   }
 
   function render() {
@@ -86,20 +144,24 @@
       ).join("");
       const where = lot.status === "Complete" ? "Finished all steps" : `Step: ${ROUTE[lot.step]}`;
       const el = document.createElement("div");
-      el.className = "lot";
+      el.className = "lot" + (lot.status === "On Hold" ? " hold" : "");
       el.innerHTML = `
         <div>
           <h2>${lot.id}: ${lot.status}</h2>
           <div class="meta">${lot.product}, ${lot.qty} units. ${where}</div>
           <div class="meta">${lot.lastEvent || "No activity yet"}</div>
+          ${lot.status === "On Hold" ? `<div class="hold-note">${lot.holdReason}</div>` : ""}
           <div class="steps">${bars}</div>
         </div>
         <div>
           <button data-act="in" ${lot.status === "Queued" ? "" : "disabled"}>Track in</button>
           <button data-act="out" ${lot.status === "Running" ? "" : "disabled"}>Track out</button>
+          ${lot.status === "On Hold" ? '<button data-act="release">Release hold</button>' : ""}
         </div>`;
       el.querySelector('[data-act="in"]').onclick = () => { trackIn(lot); render(); };
       el.querySelector('[data-act="out"]').onclick = () => { trackOut(lot); render(); };
+      const rel = el.querySelector('[data-act="release"]');
+      if (rel) rel.onclick = () => { release(lot); render(); };
       box.appendChild(el);
     });
   }
