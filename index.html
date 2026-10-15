@@ -42,6 +42,10 @@
   #msg.error { color: #b45309; font-weight: 600; }
   .lot.hold { border-color: #b45309; border-left-width: 6px; }
   .hold-note { color: #b45309; font-size: .9rem; }
+  details { margin-top: 10px; }
+  summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
+  table { border-collapse: collapse; width: 100%; margin-top: 6px; font-size: .85rem; }
+  th, td { text-align: left; padding: 4px 8px 4px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
   @media (max-width: 520px) { .lot { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -64,12 +68,21 @@
 
   // STEP 3: lots. status is "Queued", "Running", or "Complete".
   const lots = [
-    { id: "LOT-1001", product: "A14 Wafer", qty: 25, step: 0, status: "Queued", lastEvent: null },
-    { id: "LOT-1002", product: "A14 Wafer", qty: 25, step: 2, status: "Queued", lastEvent: null },
-    { id: "LOT-1003", product: "B07 Wafer", qty: 12, step: 4, status: "Running", lastEvent: null },
+    { id: "LOT-1001", product: "A14 Wafer", qty: 25, step: 0, status: "Queued", lastEvent: null, history: [] },
+    { id: "LOT-1002", product: "A14 Wafer", qty: 25, step: 2, status: "Queued", lastEvent: null, history: [] },
+    { id: "LOT-1003", product: "B07 Wafer", qty: 12, step: 4, status: "Running", lastEvent: null, history: [] },
   ];
 
   const now = () => new Date().toLocaleTimeString();
+
+  // STEP 6: audit history. Every action is recorded (who, what, when) and never edited.
+  function log(lot, who, action, detail) {
+    const entry = { time: new Date().toLocaleString(), who, action, detail };
+    lot.history.push(entry);
+    lot.lastEvent = `${who}: ${action}, ${detail}`;
+  }
+  const esc = t => String(t).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  lots.forEach(l => log(l, "SYSTEM", "Created", ROUTE[l.step]));
 
   // STEP 5: rules. The system refuses actions that break the process.
   const SPEC = { step: "Inspect", min: 95, max: 105 }; // acceptable reading range
@@ -91,7 +104,7 @@
     const op = operator();
     if (!op || lot.status !== "Queued") return;
     lot.status = "Running";
-    lot.lastEvent = `${op} tracked in at ${ROUTE[lot.step]}, ${now()}`;
+    log(lot, op, "Track in", ROUTE[lot.step]);
     say(`${lot.id} is running at ${ROUTE[lot.step]}.`);
   }
 
@@ -99,21 +112,22 @@
     const op = operator();
     if (!op || lot.status !== "Running") return;
     const stepName = ROUTE[lot.step];
+    let reading = null;
 
     // Rule 2: the inspection step needs a measurement, and bad readings stop the lot.
     if (stepName === SPEC.step) {
-      const reading = parseFloat(prompt(`Inspection reading for ${lot.id} (spec ${SPEC.min} to ${SPEC.max}):`));
+      reading = parseFloat(prompt(`Inspection reading for ${lot.id} (spec ${SPEC.min} to ${SPEC.max}):`));
       if (Number.isNaN(reading)) return say("A valid reading is required to track out of Inspect.", true);
       if (reading < SPEC.min || reading > SPEC.max) {
         lot.status = "On Hold";
         lot.holdBy = op;
         lot.holdReason = `Reading ${reading} is outside spec ${SPEC.min} to ${SPEC.max}`;
-        lot.lastEvent = `${op} placed on hold at ${stepName}, ${now()}`;
+        log(lot, op, "Placed on hold", lot.holdReason);
         return say(`${lot.id} placed on hold: ${lot.holdReason}.`, true);
       }
     }
 
-    lot.lastEvent = `${op} tracked out of ${stepName}, ${now()}`;
+    log(lot, op, "Track out", reading === null ? stepName : `${stepName}, reading ${reading}`);
     lot.step += 1;
     lot.status = lot.step >= ROUTE.length ? "Complete" : "Queued";
     say(`${lot.id} moved on.`);
@@ -127,7 +141,7 @@
     const reason = (prompt("Reason for releasing the hold:") || "").trim();
     if (!reason) return say("A release reason is required.", true);
     lot.status = "Queued"; // goes back to be re-inspected
-    lot.lastEvent = `${op} released hold (${reason}), ${now()}`;
+    log(lot, op, "Released hold", reason);
     lot.holdBy = lot.holdReason = null;
     say(`${lot.id} released and queued for ${ROUTE[lot.step]}.`);
   }
@@ -137,6 +151,7 @@
       ROUTE.map(s => `<span>${s}</span>`).join("");
 
     const box = document.getElementById("lots");
+    const open = new Set([...document.querySelectorAll("details[open]")].map(d => d.dataset.id)); // keep panels open
     box.innerHTML = "";
     lots.forEach(lot => {
       const bars = ROUTE.map((_, i) =>
@@ -149,9 +164,17 @@
         <div>
           <h2>${lot.id}: ${lot.status}</h2>
           <div class="meta">${lot.product}, ${lot.qty} units. ${where}</div>
-          <div class="meta">${lot.lastEvent || "No activity yet"}</div>
+          <div class="meta">${esc(lot.lastEvent)}</div>
           ${lot.status === "On Hold" ? `<div class="hold-note">${lot.holdReason}</div>` : ""}
           <div class="steps">${bars}</div>
+          <details data-id="${lot.id}" ${open.has(lot.id) ? "open" : ""}>
+            <summary>History (${lot.history.length})</summary>
+            <table>
+              <tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr>
+              ${[...lot.history].reverse().map(h =>
+                `<tr><td>${esc(h.time)}</td><td>${esc(h.who)}</td><td>${esc(h.action)}</td><td>${esc(h.detail)}</td></tr>`).join("")}
+            </table>
+          </details>
         </div>
         <div>
           <button data-act="in" ${lot.status === "Queued" ? "" : "disabled"}>Track in</button>
