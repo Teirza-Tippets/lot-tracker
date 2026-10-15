@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lot Tracker</title>
+<style>
+  :root {
+    --bg: #eef1f3; --card: #ffffff; --ink: #1d2733; --muted: #5d6b7a;
+    --line: #d5dce2; --accent: #0f766e; --accent-ink: #ffffff; --done: #94a3b0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #14191f; --card: #1c232b; --ink: #e6ebf0; --muted: #9aa8b6;
+            --line: #2d3742; --accent: #2dd4bf; --accent-ink: #0b1a18; --done: #5d6b7a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px 16px; background: var(--bg); color: var(--ink);
+         font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  p.sub { margin: 0 0 20px; color: var(--muted); }
+  .route { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+  .route span { padding: 4px 12px; border: 1px solid var(--line); border-radius: 999px;
+                background: var(--card); font-size: .9rem; }
+  .lot { background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+         padding: 14px 16px; margin-bottom: 12px; display: grid; gap: 10px;
+         grid-template-columns: 1fr auto; align-items: center; }
+  .lot h2 { font-size: 1.05rem; margin: 0; }
+  .meta { color: var(--muted); font-size: .9rem; }
+  .steps { display: flex; gap: 4px; margin-top: 8px; }
+  .steps i { height: 6px; flex: 1; border-radius: 3px; background: var(--line); }
+  .steps i.done { background: var(--done); }
+  .steps i.now { background: var(--accent); }
+  button { font: inherit; padding: 8px 16px; border-radius: 6px; border: 0; cursor: pointer;
+           background: var(--accent); color: var(--accent-ink); }
+  button:disabled { background: var(--line); color: var(--muted); cursor: not-allowed; }
+  button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+  @media (max-width: 520px) { .lot { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Lot Tracker</h1>
+  <p class="sub">Track lots in and out of each process step, like a manufacturing execution system (MES).</p>
+  <div class="route" id="route" aria-label="Process route"></div>
+  <div id="lots"></div>
+</main>
+
+<script>
+  // STEP 2: the process route. Every lot must pass through these in order.
+  const ROUTE = ["Clean", "Coat", "Expose", "Etch", "Inspect"];
+
+  // STEP 3: lots. status is "Queued", "Running", or "Complete".
+  const lots = [
+    { id: "LOT-1001", product: "A14 Wafer", qty: 25, step: 0, status: "Queued", lastEvent: null },
+    { id: "LOT-1002", product: "A14 Wafer", qty: 25, step: 2, status: "Queued", lastEvent: null },
+    { id: "LOT-1003", product: "B07 Wafer", qty: 12, step: 4, status: "Running", lastEvent: null },
+  ];
+
+  const now = () => new Date().toLocaleTimeString();
+
+  // STEP 4: Track In starts work on the current step. Track Out finishes it
+  // and moves the lot to the next step (or completes it).
+  function trackIn(lot) {
+    if (lot.status !== "Queued") return;
+    lot.status = "Running";
+    lot.lastEvent = `Tracked in at ${ROUTE[lot.step]}, ${now()}`;
+  }
+
+  function trackOut(lot) {
+    if (lot.status !== "Running") return;
+    lot.lastEvent = `Tracked out of ${ROUTE[lot.step]}, ${now()}`;
+    lot.step += 1;
+    lot.status = lot.step >= ROUTE.length ? "Complete" : "Queued";
+  }
+
+  function render() {
+    document.getElementById("route").innerHTML =
+      ROUTE.map(s => `<span>${s}</span>`).join("");
+
+    const box = document.getElementById("lots");
+    box.innerHTML = "";
+    lots.forEach(lot => {
+      const bars = ROUTE.map((_, i) =>
+        `<i class="${i < lot.step ? "done" : i === lot.step && lot.status !== "Complete" ? "now" : ""}"></i>`
+      ).join("");
+      const where = lot.status === "Complete" ? "Finished all steps" : `Step: ${ROUTE[lot.step]}`;
+      const el = document.createElement("div");
+      el.className = "lot";
+      el.innerHTML = `
+        <div>
+          <h2>${lot.id}: ${lot.status}</h2>
+          <div class="meta">${lot.product}, ${lot.qty} units. ${where}</div>
+          <div class="meta">${lot.lastEvent || "No activity yet"}</div>
+          <div class="steps">${bars}</div>
+        </div>
+        <div>
+          <button data-act="in" ${lot.status === "Queued" ? "" : "disabled"}>Track in</button>
+          <button data-act="out" ${lot.status === "Running" ? "" : "disabled"}>Track out</button>
+        </div>`;
+      el.querySelector('[data-act="in"]').onclick = () => { trackIn(lot); render(); };
+      el.querySelector('[data-act="out"]').onclick = () => { trackOut(lot); render(); };
+      box.appendChild(el);
+    });
+  }
+
+  render();
+</script>
+</body>
+</html>
